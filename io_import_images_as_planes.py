@@ -3,7 +3,7 @@
 bl_info = {
     "name": "Import Images as Planes",
     "author": "Florian Meyer (tstscr), mont29, matali, Ted Schundler (SpkyElctrc), mrbimax",
-    "version": (3, 5, 0),
+    "version": (3, 5, 1),
     "blender": (2, 91, 0),
     "location": "File > Import > Images as Planes or Add > Image > Images as Planes",
     "description": "Imports images and creates planes with the appropriate aspect ratio. "
@@ -601,7 +601,14 @@ class IMPORT_IMAGE_OT_to_plane(Operator, AddObjectHelper):
 
     filter_image: BoolProperty(default=True, options={'HIDDEN', 'SKIP_SAVE'})
     filter_movie: BoolProperty(default=True, options={'HIDDEN', 'SKIP_SAVE'})
-    filter_folder: BoolProperty(default=True, options={'HIDDEN', 'SKIP_SAVE'})
+    filter_folder: BoolProperty(default=True, options={'HIDDEN', 'SKIP_SAVE'})    
+
+    # --------------------------------
+    # Properties - Addon's UI Settings
+
+    use_alternative_rowprop_display: BoolProperty(
+        name="Use alternative UI display", default=False,
+        description="Enum properies use the alternative display if checked")
 
     # ----------------------
     # Properties - Importing
@@ -615,6 +622,79 @@ class IMPORT_IMAGE_OT_to_plane(Operator, AddObjectHelper):
         description="Import sequentially numbered images as an animated "
                     "image sequence instead of separate planes"
     )
+    
+    # ------------------------------
+    # Properties - Material / Shader
+    SHADERS = (
+        ('PRINCIPLED',"Principled","Principled Shader"),
+        ('SHADELESS', "Shadeless", "Only visible to camera and reflections"),
+        ('EMISSION', "Emit", "Emission Shader"),
+    )
+    shader: EnumProperty(name="Shader", items=SHADERS, default='PRINCIPLED', description="Node shader to use")
+
+    emit_strength: FloatProperty(
+        name="Strength", min=0.0, default=1.0, soft_max=10.0,
+        step=100, description="Brightness of Emission Texture")
+
+    use_transparency: BoolProperty(
+        name="Use Alpha", default=True,
+        description="Use alpha channel for transparency")
+    
+    t = bpy.types.Material.bl_rna.properties["blend_method"]
+    blend_method_items = tuple((e.identifier, e.name, e.description) for e in t.enum_items)
+    blend_method: EnumProperty(
+       name=t.name, items=blend_method_items, default=t.default,
+       description=t.description)
+    
+    t = bpy.types.Material.bl_rna.properties["shadow_method"]    
+    shadow_method_items = tuple((e.identifier, e.name, e.description) for e in t.enum_items)
+    shadow_method: EnumProperty(
+       name=t.name, items=shadow_method_items, default=t.default,
+       description=t.description)
+
+    t = bpy.types.Material.bl_rna.properties["use_backface_culling"]
+    use_backface_culling: BoolProperty(
+        name=t.name, default=t.default,
+        description=t.description)
+
+    t = bpy.types.Material.bl_rna.properties["show_transparent_back"]
+    show_transparent_back: BoolProperty(
+        name=t.name, default=t.default,
+        description=t.description)
+
+    overwrite_material: BoolProperty(
+        name="Overwrite Material", default=True,
+        description="Overwrite existing Material (based on material name)")
+
+    compositing_nodes: BoolProperty(
+        name="Setup Corner Pin", default=False,
+        description="Build Compositor Nodes to reference this image "
+                    "without re-rendering")
+
+    # ------------------
+    # Properties - Image    
+    t = bpy.types.ShaderNodeTexImage.bl_rna.properties["interpolation"]    
+    interpolation_mode_items = tuple((e.identifier, e.name, e.description) for e in t.enum_items)
+    interpolation: EnumProperty(
+       name=t.name, items=interpolation_mode_items, default=t.default,
+       description=t.description)
+    
+    t = bpy.types.ShaderNodeTexImage.bl_rna.properties["extension"]    
+    extension_mode_items = tuple((e.identifier, e.name, e.description) for e in t.enum_items)
+    extension: EnumProperty(
+        name=t.name, items=extension_mode_items, default=t.default,
+        description=t.description)
+
+    t = bpy.types.Image.bl_rna.properties["alpha_mode"]
+    alpha_mode_items = tuple((e.identifier, e.name, e.description) for e in t.enum_items)
+    alpha_mode: EnumProperty(
+        name=t.name, items=alpha_mode_items, default=t.default,
+        description=t.description)
+
+    t = bpy.types.ImageUser.bl_rna.properties["use_auto_refresh"]
+    use_auto_refresh: BoolProperty(name=t.name, default=True, description=t.description)
+
+    relative: BoolProperty(name="Relative Paths", default=True, description="Use relative file paths")
 
     # -------------------------------------
     # Properties - Position and Orientation
@@ -704,85 +784,7 @@ class IMPORT_IMAGE_OT_to_plane(Operator, AddObjectHelper):
                            default=1.0, min=0.001, soft_min=0.001, subtype='DISTANCE', unit='LENGTH')
 
     factor: FloatProperty(name="Definition", min=1.0, default=600.0,
-                           description="Number of pixels per inch or Blender Unit")
-
-    # ------------------------------
-    # Properties - Material / Shader
-    SHADERS = (
-        ('PRINCIPLED',"Principled","Principled Shader"),
-        ('SHADELESS', "Shadeless", "Only visible to camera and reflections"),
-        ('EMISSION', "Emit", "Emission Shader"),
-    )
-    shader: EnumProperty(name="Shader", items=SHADERS, default='PRINCIPLED', description="Node shader to use")
-
-    emit_strength: FloatProperty(
-        name="Strength", min=0.0, default=1.0, soft_max=10.0,
-        step=100, description="Brightness of Emission Texture")
-
-    use_transparency: BoolProperty(
-        name="Use Alpha", default=True,
-        description="Use alpha channel for transparency")
-
-    BLEND_METHODS = (
-        ('BLEND',"Blend","Render polygon transparent, depending on alpha channel of the texture"),
-        ('CLIP', "Clip","Use the alpha threshold to clip the visibility (binary visibility)"),
-        ('HASHED', "Hashed","Use noise to dither the binary visibility (works well with multi-samples)"),
-        ('OPAQUE', "Opaque","Render surface without transparency"),
-    )
-    blend_method: EnumProperty(name="Blend Mode", items=BLEND_METHODS, default='BLEND', description="Blend Mode for Transparent Faces")
-
-    SHADOW_METHODS = (
-        ('CLIP', "Clip","Use the alpha threshold to clip the visibility (binary visibility)"),
-        ('HASHED', "Hashed","Use noise to dither the binary visibility (works well with multi-samples)"),
-        ('OPAQUE',"Opaque","Material will cast shadows without transparency"),
-        ('NONE',"None","Material will cast no shadow"),
-    )
-    shadow_method: EnumProperty(name="Shadow Mode", items=SHADOW_METHODS, default='CLIP', description="Shadow mapping method")
-
-    use_backface_culling: BoolProperty(
-        name="Backface Culling", default=False,
-        description="Use back face culling to hide the back side of faces")
-
-    show_transparent_back: BoolProperty(
-        name="Show Backface", default=True,
-        description="Render multiple transparent layers (may introduce transparency sorting problems)")
-
-    overwrite_material: BoolProperty(
-        name="Overwrite Material", default=True,
-        description="Overwrite existing Material (based on material name)")
-
-    compositing_nodes: BoolProperty(
-        name="Setup Corner Pin", default=False,
-        description="Build Compositor Nodes to reference this image "
-                    "without re-rendering")
-
-    # ------------------
-    # Properties - Image
-    INTERPOLATION_MODES = (
-        ('Linear', "Linear", "Linear interpolation"),
-        ('Closest', "Closest", "No interpolation (sample closest texel)"),
-        ('Cubic', "Cubic", "Cubic interpolation"),
-        ('Smart', "Smart", "Bicubic when magnifying, else bilinear (OSL only)"),
-    )
-    interpolation: EnumProperty(name="Interpolation", items=INTERPOLATION_MODES, default='Linear', description="Texture interpolation")
-
-    EXTENSION_MODES = (
-        ('CLIP', "Clip", "Clip to image size and set exterior pixels as transparent"),
-        ('EXTEND', "Extend", "Extend by repeating edge pixels of the image"),
-        ('REPEAT', "Repeat", "Cause the image to repeat horizontally and vertically"),
-    )
-    extension: EnumProperty(name="Extension", items=EXTENSION_MODES, default='CLIP', description="How the image is extrapolated past its original bounds")
-
-    t = bpy.types.Image.bl_rna.properties["alpha_mode"]
-    alpha_mode_items = tuple((e.identifier, e.name, e.description) for e in t.enum_items)
-    alpha_mode: EnumProperty(
-        name=t.name, items=alpha_mode_items, default=t.default,
-        description=t.description)
-
-    t = bpy.types.ImageUser.bl_rna.properties["use_auto_refresh"]
-    use_auto_refresh: BoolProperty(name=t.name, default=True, description=t.description)
-
-    relative: BoolProperty(name="Relative Paths", default=True, description="Use relative file paths")
+                           description="Number of pixels per inch or Blender Unit")    
 
     # -------
     # Draw UI
@@ -795,21 +797,23 @@ class IMPORT_IMAGE_OT_to_plane(Operator, AddObjectHelper):
         row = box.row()
         row.active = bpy.data.is_saved
         row.prop(self, "relative")
-
         box.prop(self, "force_reload")
         box.prop(self, "image_sequence")
-
-    def draw_material_config(self, context):
-        # --- Material / Rendering Properties --- #
+        
+    def draw_compositing_config(self, context):        
+        # --- Compositing Properties --- #
         layout = self.layout
         box = layout.box()
-
+        
         box.label(text="Compositing Nodes:", icon='RENDERLAYERS')
         box.prop(self, "compositing_nodes")
+
+    def draw_material_config(self, context):
+        # --- Material Properties --- #        
         layout = self.layout
         box = layout.box()
+        
         box.label(text="Material Settings:", icon='MATERIAL')
-
         box.label(text="Material Type")
         row = box.row()
         row.prop(self, 'shader', expand=True)
@@ -818,7 +822,10 @@ class IMPORT_IMAGE_OT_to_plane(Operator, AddObjectHelper):
 
         box.label(text="Blend Mode")
         row = box.row()
-        row.prop(self, 'blend_method', expand=True)
+        if not self.use_alternative_rowprop_display:
+            row.prop(self, 'blend_method', text="", expand=self.use_alternative_rowprop_display)
+        else:
+            row.prop(self, 'blend_method', expand=self.use_alternative_rowprop_display)
         if self.use_transparency and self.alpha_mode != "NONE" and self.blend_method == "OPAQUE":
             box.label(text="'Opaque' does not support alpha", icon="ERROR")
         if self.blend_method == 'BLEND':
@@ -827,7 +834,10 @@ class IMPORT_IMAGE_OT_to_plane(Operator, AddObjectHelper):
 
         box.label(text="Shadow Mode")
         row = box.row()
-        row.prop(self, 'shadow_method', expand=True)
+        if not self.use_alternative_rowprop_display:
+            row.prop(self, 'shadow_method', text="", expand=self.use_alternative_rowprop_display)
+        else:
+            row.prop(self, 'shadow_method', expand=self.use_alternative_rowprop_display)
 
         row = box.row()
         row.prop(self, "use_backface_culling")
@@ -837,15 +847,24 @@ class IMPORT_IMAGE_OT_to_plane(Operator, AddObjectHelper):
             box.label(text=tip_("%s is not supported") % engine, icon='ERROR')
 
         box.prop(self, "overwrite_material")
+
+    def draw_image_config(self, context):
+        # --- Image Properties --- # 
         layout = self.layout
         box = layout.box()
         box.label(text="Texture Settings:", icon='TEXTURE')
         box.label(text="Interpolation")
         row = box.row()
-        row.prop(self, 'interpolation', expand=True)
+        if not self.use_alternative_rowprop_display:
+            row.prop(self, 'interpolation', text="", expand=self.use_alternative_rowprop_display)
+        else:
+            row.prop(self, 'interpolation', expand=self.use_alternative_rowprop_display)
         box.label(text="Extension")
         row = box.row()
-        row.prop(self, 'extension', expand=True)
+        if not self.use_alternative_rowprop_display:
+            row.prop(self, 'extension', text="", expand=self.use_alternative_rowprop_display)
+        else:
+            row.prop(self, 'extension', expand=self.use_alternative_rowprop_display)
         row = box.row()
         row.prop(self, "use_transparency")
         if self.use_transparency:
@@ -888,11 +907,22 @@ class IMPORT_IMAGE_OT_to_plane(Operator, AddObjectHelper):
         row.alignment = 'RIGHT'
         row.prop(self, "align_track")
 
+    def draw_addonsUI_config(self, context):
+        # --- Addon's UI Properties --- #
+        layout = self.layout
+        box = layout.box()
+
+        box.label(text="Addon UI Settings", icon='SORTSIZE')
+        box.prop(self, "use_alternative_rowprop_display")
+
     def draw(self, context):
 
         # Draw configuration sections
+        self.draw_addonsUI_config(context)
         self.draw_import_config(context)
+        self.draw_compositing_config(context)
         self.draw_material_config(context)
+        self.draw_image_config(context)
         self.draw_spatial_config(context)
 
     # -------------------------------------------------------------------------
